@@ -1,0 +1,824 @@
+---
+title: "Social Web Analytics Group Assignment"
+subtitle: "Spider-Man: Brand New Day"
+author: "Group 07"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    latex_engine: xelatex
+geometry: margin=1in
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+
+```
+
+
+
+# Project Overview
+
+This project investigates Bluesky discussions surrounding *Spider-Man: Brand New Day* using social web analytics techniques. Data was collected through the Bluesky API using R, resulting in a dataset of 199 posts. The aim is to explore how users discuss the film, identify common themes, examine engagement patterns and investigate connections between users.
+
+The analysis consists of four main components: hypothesis testing, text/content analysis and visualisation, clustering, and network analysis. Hypothesis testing examines whether mentioning Tom Holland is associated with receiving at least one like. Text analysis identifies frequently occurring and distinctive words, while clustering groups posts based on similarities in their content. Network analysis examines follow relationships between Bluesky accounts connected to the topic.
+
+Together, these methods provide insights into the content, engagement and network structure of the sampled Bluesky discussions.
+
+# Project Tasks
+## Data Collection
+
+```{r collect-data, eval=FALSE}
+# Load the Package
+library(atrrr)
+
+# Collect the data
+search_skeet_results = search_skeet(
+  "Spider-Man Brand New Day",
+  sort = "latest",
+  since = "2026-01-01",
+  limit = 100
+)
+
+
+# Inspect the data
+class(search_skeet_results)
+dim(search_skeet_results)
+names(search_skeet_results)
+
+```
+
+```{r}
+load("SpiderMan_Bluesky_Data.RData")
+```
+
+### How the data was accessed and obtained
+
+Data was collected from Bluesky using its API through R. Posts were retrieved using search_skeet() with the search term “Spider-Man Brand New Day”, including posts from 1 January 2026 onwards and sorting the results by the latest posts.
+
+### Relevant R packages
+
+The atrrr package was used to access and retrieve data from Bluesky. Authentication was completed using a Bluesky account before running the search query.
+
+### Variables collected and data volume
+
+The resulting dataset contained 199 posts and 23 variables. Relevant variables included the post text, author_handle, author_name, created_at, and engagement measures such as like_count, repost_count, reply_count, quote_count, and bookmark_count. Variables such as mentions and in_reply_to were also collected and may be useful for network analysis.
+
+### Relevant limitations
+
+The data only includes posts returned by the selected search term, so relevant posts using different wording may not have been captured. As the results were sorted by "latest", the dataset may also favour more recent discussion rather than represent the entire period evenly. A limit of 100 was specified, but the atrrr retrieval process returned 199 posts, which was the dataset retained for the analysis.
+
+## Hypothesis Testing 
+**Research Question:** Amongst Bluesky posts naming Spider Man: Brand New Day, are posts mentioning Tom Holland more or less likely to get at least one like than posts that do not mention him?
+
+(We are comparing the percentage of likes and not the total of likes. This means if a post has 50 likes and another post has 1, however they are both counted as one like)
+
+
+\
+*Step 1: Defining Hypothesis testing* 
+  
+$H_0$ Mentioning Tom Holland and receiving at least one like is independent
+\
+$H_A$ Mentioning Tom Holland and receiving at least one like is dependent
+
+The null hypothesis assumes that mentioning Tom Holland and receiving at least one like are independent. Therefore, the probability of receiving at least one like is the same for posts that mention Tom Holland and those that do not.
+\
+The significance level is $\alpha = 0.05$. 
+\
+\
+*Step 2: Selecting Statistical Test* 
+\
+**Chi-Square Test**
+\
+Chi-square test of independence has been selected because both variables are categorical.
+
+* Independent Variable: A post either mentions Tom Holland or it does not.
+* Dependent Variable: A post either receives at least one like or it receives zero likes
+\
+
+*Step 3: Preparing Data*
+```{r}
+
+hyp_posts = as.data.frame(search_skeet_results)
+
+hyp_posts = hyp_posts[, c("uri", "text", "like_count")]
+
+#remove missing, blank and duplicate posts 
+hyp_posts = hyp_posts[
+  !is.na(hyp_posts$uri) & !is.na(hyp_posts$text),
+]
+hyp_posts = hyp_posts[trimws(hyp_posts$text) != "", ]
+hyp_posts = hyp_posts[!duplicated(hyp_posts$uri), ]
+
+#create lower case version for text searching 
+hyp_posts$text_search = tolower(hyp_posts$text)
+hyp_posts$text_search = gsub(
+  "[^a-z0-9]",
+  "",
+  hyp_posts$text_search
+)
+
+#keep spider-man brand new day posts 
+hyp_posts = hyp_posts[
+  grepl("spiderman", hyp_posts$text_search) &
+  grepl("brandnewday", hyp_posts$text_search),
+]
+
+#check to see if posts mention tom holland
+hyp_posts$mentions_tom = ifelse(
+  grepl("tomholland", hyp_posts$text_search),
+  "Yes",
+  "No"
+)
+
+#Check whether each post recieved as least one like 
+hyp_posts$has_like = ifelse(
+  hyp_posts$like_count > 0, 
+  "Yes",
+  "No"
+)
+
+#Contingency Table 
+conTab = table(
+  Tom_Holland = hyp_posts$mentions_tom,
+  At_least_one_like = hyp_posts$has_like
+)
+
+conTab
+```
+
+```{r}
+#Calculate percentages within each group 
+round(prop.table(conTab, margin = 1) * 100, 2)
+```
+*Step 4: Chi-Squared Test*
+```{r}
+set.seed(123)
+
+ct = chisq.test(
+  conTab,
+  simulate.p.value = TRUE
+)
+ct
+
+#check expected frequencies 
+ct$expected 
+
+#p-value 
+ct$p.value
+```
+
+*Step 5: Interpretation of Results*
+
+- The Chi-Square Test produced a test statistic of 0.091 and a p-value of 0.8186.
+- Since the p-value is greater than the significance level ($\alpha = 0.05$), we fail to reject $H_0$.
+- There is insufficient statistical evidence to conclude that mentioning Tom Holland is associated with receiving at least one like.
+- Of the posts that did not mention Tom Holland, 48.92% received at least one like, compared with 45.45% of posts mentioning him. Although the percentages differ slightly, the difference is not statistically significant at the 5% level.
+
+
+## Text/ Content Analysis and Visualisation .
+
+**Research Question:** What are the most frequent and distinctive terms used in Bluesky posts discussing Spider-Man: Brand New Day?
+
+*Step 1: Loading data and selecting posts*
+
+```{r}
+#loading packages
+
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(RColorBrewer)
+
+
+text_posts = as.data.frame(search_skeet_results)
+text_n_original = nrow(text_posts)
+
+# Keeping the columns
+text_posts = text_posts[, c(
+  "uri", "author_handle", "text"
+)]
+
+# Removing missing, blank and duplicate posts
+text_posts = text_posts[
+  !is.na(text_posts$uri) & !is.na(text_posts$text),
+]
+text_posts = text_posts[trimws(text_posts$text) != "", ]
+text_posts = text_posts[!duplicated(text_posts$uri), ]
+
+text_n_clean = nrow(text_posts)
+
+# Make a lowercase copy of the text for searching
+text_posts$text_search = tolower(text_posts$text)
+text_posts$text_search = gsub("[^a-z0-9]", "", text_posts$text_search)
+
+#Making sure posts are about Spider Man Brand New Day
+text_posts = text_posts[
+  grepl("spiderman", text_posts$text_search) &
+  grepl("brandnewday", text_posts$text_search),
+]
+
+text_n_title = nrow(text_posts) #Keep posts relating to Spider Man Brand New Day
+
+# Show how the number of posts after cleaning
+cleaning_summary = data.frame(
+  Stage = c(
+    "Original dataset",
+    "After removing empty and duplicate posts",
+    "Matches Spider-Man: Brand New Day"
+  ),
+  Posts = c(
+    text_n_original, 
+    text_n_clean,
+    text_n_title
+  )
+)
+cleaning_summary
+```
+
+*Step 2: Cleaning text and creating a corpus*
+```{r}
+text_clean = tolower(text_posts$text)
+
+#remove URLs and website links
+text_clean = gsub(
+  "https?://\\S+|www\\.\\S+|\\b[a-z0-9.-]+\\.[a-z]{2,}\\S*",
+  " ",
+  text_clean,
+  perl = TRUE
+)
+
+#Creating corpus 
+text_corpus = Corpus(VectorSource(text_clean))
+
+#Convert text to ASCII
+text_corpus = tm_map(
+  text_corpus,
+  function(x) iconv(x, to = "ASCII", sub = " ")
+)
+
+#Clean text
+text_corpus = tm_map(text_corpus, removeNumbers)
+text_corpus = tm_map(text_corpus, removePunctuation)
+text_corpus = tm_map(text_corpus, stripWhitespace)
+text_corpus = tm_map(text_corpus, tolower)
+
+text_corpus = tm_map(
+  text_corpus,
+  removeWords,
+  c(stopwords(), "spiderman", "brand", "new", "day", "spidermanbrandnewday")
+)
+```
+
+*Step 3: Representing text as a document term matrix*
+```{r}
+# Create document-term matrix
+text_dtm = DocumentTermMatrix(text_corpus)
+
+#Convert document matrix into regular matrix 
+text_matrix = as.matrix(text_dtm)
+
+# Check size of matrix
+dim(text_matrix)
+
+# Summarise the final text representation.
+text_summary = data.frame(
+  Posts = nrow(text_matrix),
+  Authors = length(unique(text_posts$author_handle)),
+  Unique_terms = ncol(text_matrix),
+  Total_term_occurrences = sum(text_matrix)
+)
+text_summary
+```
+
+After removing missing and duplicate records, 193 posts remained. Further filtering retained 161 posts containing the film title. The text was converted to lowercase, and URLs, numbers, punctuation and common stopwords were removed. Film-title terms were also excluded to allow other discussion topics to become more visible. The resulting document-term matrix contained 1,158 unique terms across 161 posts from 129 authors.
+
+*Step 4: Visualisation 1 - Most Frequent Words*
+```{r}
+# Count how many times each word appears 
+text_freq = colSums(text_matrix)
+
+# Sort words from more frequent to least
+text_freq = sort(text_freq, decreasing = TRUE)
+
+# Show ten most frequent words
+text_top10 = head(text_freq, 10)
+
+word_summary = data.frame(
+  Word = names(text_top10),
+  Frequency = as.numeric(text_top10)
+)
+
+word_summary
+```
+
+```{r}
+# Select 15 most frequent words
+text_top15 = head(text_freq, 15)
+
+#increase left margin for word labels
+par(mar = c(5, 8, 4, 2))
+
+# Create a horizontal bar chart
+barplot(
+  rev(text_top15),
+  horiz = TRUE,
+  names.arg = names(rev(text_top15)),
+  las = 1,
+  col = rainbow(15),
+  border = NA,
+  main = "Most Frequent Words in Spider-Man: Brand New Day",
+  xlab = "Frequency"
+)
+```
+
+**Visualisation 2 - TF-IDF Weighted Word Cloud**
+
+```{r}
+#Apply TF-IDF to document term matrix
+text_tfidf = weightTfIdf(text_dtm)
+
+tfidf_matrix = as.matrix(text_tfidf)
+
+tfidf_scores = colSums(tfidf_matrix)
+
+#sort the words by TF-IDF weight
+tfidf_scores = sort(tfidf_scores, decreasing = TRUE)
+
+#keep top 100 words 
+tfidf_top = head(tfidf_scores, 100)  
+
+wordcloud(
+  names(tfidf_top),
+  tfidf_top,
+  random.order = FALSE,
+  min.freq = 0,
+  max.words = 100,
+  colors = brewer.pal(8, "Dark2"),
+  scale = c(2, .5)
+)
+title("TF-IDF Weighted Word Cloud for Spider-Man: Brand New Day")
+```
+**Interpretation**:
+
+*Visualisation 1 - Most Frequent Words*
+
+- The frequency bar chart shows the most commonly occurring terms in Bluesky posts discussing *Spider-Man: Brand New Day*.
+- Words such as *tom*, *holland*, *florence* and *pugh* suggest that discussions frequently mention actors associated with the film, while terms such as *marvel*, *film* and *avengers* reflect broader Marvel-related discussions.
+- Removing the film-title terms allows other prominent discussion topics to become more visible.
+- However, word frequency only measures how often a term appears and does not necessarily indicate how distinctive or important that term is to an individual post.
+
+*Visualisation 2 - TF-IDF Weighted Word Cloud*
+
+- The TF-IDF weighted word cloud highlights terms that are relatively distinctive across the analysed posts, rather than simply the most frequently occurring words.
+- Terms such as *digital*, *nowplaying* and *poster* suggest discussion about film promotion and media availability, while *tombstone*, *milestone* and *grossed* reflect discussion about characters and box-office performance.
+- Compared with the frequency bar chart, the TF-IDF word cloud provides an alternative view of the vocabulary by giving greater weight to terms that help distinguish individual posts. However, these terms should be interpreted alongside their original context, as individual words do not fully explain the meaning of a post.
+
+## Clustering
+
+**Research Question:** What distinct themes can be identified by clustering Bluesky posts discussing *Spider-Man: Brand New Day* based on similarities in their text content?
+
+TF-IDF was used to represent the posts because it gives greater weight to terms that help distinguish one post from another. Cosine distance was selected to measure differences in word usage between posts, while multidimensional scaling (MDS) converted the distance information into coordinates suitable for K-means clustering. The number of clusters was explored using the elbow method, and the resulting groups were interpreted using their highest-weighted terms.
+
+*Step 1: Create TF-IDF Matrix:*
+
+```{r}
+#Create a term-document matrix
+cluster_tdm = TermDocumentMatrix(text_corpus)
+
+cluster_tfidf = weightTfIdf(cluster_tdm)
+
+#convert into regular matrix
+cluster_matrix = t(as.matrix(cluster_tfidf))
+
+#remove posts with no remaining terms
+empty_posts = which(rowSums(abs(cluster_matrix)) == 0)
+
+if (length(empty_posts) > 0 ) {
+  cluster_matrix = cluster_matrix[-empty_posts, ]
+}
+
+#size of matrix
+dim(cluster_matrix)
+```
+
+*Step 2: Calculate Cosine Distance:*
+```{r}
+#Normalising each post 
+norm_cluster_matrix = diag(
+  1/sqrt(rowSums(cluster_matrix^2))
+) %*% cluster_matrix
+
+#Calculating Cosine Distance
+D = dist(norm_cluster_matrix, method = "euclidean")^2/2
+```
+
+*Step 3: Convert the Distance Matrix for K-Means*
+```{r}
+# Count the number of posts
+N = nrow(cluster_matrix)
+
+#convert cosine distance into coordinates
+mds_cluster_matrix = cmdscale(
+  D,
+  k = min(50, N - 1)
+)
+
+#Check the size
+dim(mds_cluster_matrix)
+```
+
+The clustering matrix contained 160 posts and 1,158 terms after removing posts with no remaining terms. Cosine distance was calculated using the normalised TF-IDF matrix to compare the text content of posts. MDS was then used to represent these distances in 50 dimensions for K-means clustering.
+
+*Step 4: Select the number of clusters*
+```{r}
+#Test between 1 and 10 clusters
+n = 10
+
+SSW = rep(0, n)
+
+set.seed(123)
+
+for (a in 1:n) {
+  K = kmeans(
+    mds_cluster_matrix, 
+    a, 
+    nstart = 20)
+  SSW[a] = K$tot.withinss
+}
+
+#Create elbow plot 
+plot(
+  1:n,
+  SSW,
+  type = "b",
+  xlab = "Number of Clusters",
+  ylab = "Within -Cluster Sum of Squares",
+  main = "Elbow Method for selecting number of clusters")
+```
+*Interpretation:*
+
+- The elbow plot shows that the within-cluster sum of squares generally decreases as the number of clusters increases.
+- Although there is no clearly defined elbow point, four clusters were selected as a manageable solution for exploratory analysis.
+- The four-cluster solution was examined using the highest-weighted terms in each cluster to assess whether the groups represented interpretable discussion themes.
+
+*Step 5: Select final number of clusters*
+```{r}
+#selecting number of clusters
+number_of_clusters = 4
+
+#run final k-means clustering
+set.seed(123)
+
+K=kmeans(
+  mds_cluster_matrix,
+  number_of_clusters,
+  nstart = 20
+)
+
+#show number of posts in each cluster 
+table(K$cluster)
+```
+
+*Step 6: Visualise Cluster*
+```{r}
+mds2.posts.matrix = cmdscale(
+  D, 
+  k = 2
+  )
+
+#plot clusters
+plot(
+  mds2.posts.matrix, 
+  col = K$cluster,
+  xlab = "dimension 1",
+  ylab = "dimension 2",
+  main = "Clusters of Spider Man: Brand New Day posts"
+)
+
+#cluster legend 
+legend(
+  "bottomright",
+  legend = paste("cluster", 1:number_of_clusters),
+  col = 1:number_of_clusters,
+  pch = 19
+)
+```
+*interpretation*
+
+- Each point represents a Bluesky post, with colours indicating its K-means cluster assignment.
+- Posts positioned closer together in the two-dimensional MDS visualisation have more similar representations in the plotted dimensions.
+- the four different colours represent the four clusters using k-means 
+
+*Step 7: Examine clusters:*
+**Cluster 1**
+```{r}
+cluster.number = 1
+
+clusterpostsId = which(K$cluster == cluster.number)
+clusterposts = cluster_matrix[clusterpostsId, ]
+
+clusterTermWeight = colMeans(clusterposts)
+
+sort(clusterTermWeight, decreasing = TRUE)[1:10]
+```
+*Interpretation:*
+
+- The highest-weighted terms include *pugh*, *florence*, *tom*, *holland* and *yelena*.
+- These terms suggest that Cluster 1 mainly represents discussion about the film's cast and characters, particularly Florence Pugh and Tom Holland.
+
+**Cluster 2**
+```{r}
+cluster.number = 2
+
+clusterpostsId2 = which(K$cluster == cluster.number)
+clusterposts2 = cluster_matrix[clusterpostsId2, ]
+
+clusterTermWeight2 = colMeans(clusterposts2)
+
+sort(clusterTermWeight2, decreasing = TRUE)[1:10]
+```
+
+*Interpretation:*
+
+- The highest-weighted terms include *digital*, *think*, *nowplaying*, *variety*, *tombstone* and *poster*.
+- These terms suggest that Cluster 2 represents a broad range of film-related discussions, including promotional material, media coverage and character-related content.
+
+**Cluster 3**
+```{r}
+cluster.number = 3
+
+clusterpostsId3 = which(K$cluster == cluster.number)
+clusterposts3 = cluster_matrix[clusterpostsId3, ]
+
+clusterTermWeight3 = colMeans(clusterposts3)
+
+sort(clusterTermWeight3, decreasing = TRUE)[1:10]
+```
+
+*Interpretation:*
+
+- The highest-weighted terms include *estimated*, *stands*, *total*, *boxoffice*, *grossed* and *locations*.
+- These terms suggest that Cluster 3 focuses on box-office estimates and reported performance, including revenue figures and results across different locations.
+
+**Cluster 4**
+```{r}
+cluster.number = 4
+
+clusterpostsId4 = which(K$cluster == cluster.number)
+clusterposts4 = cluster_matrix[clusterpostsId4, ]
+
+clusterTermWeight4 = colMeans(clusterposts4)
+
+sort(clusterTermWeight4, decreasing = TRUE)[1:10]
+```
+
+*Interpretation:*
+
+- The highest-weighted terms include *box*, *office*, *milestone*, *global*, *history* and *record*.
+- These terms suggest that Cluster 4 focuses on box-office milestones, global performance and historical records, rather than the estimates and location-based figures more prominent in Cluster 3.
+
+
+**Overall Clustering Interpretation and Limitations**
+
+The K-means analysis grouped 160 posts into four clusters. Cluster 2 contained the majority of posts (127), suggesting that much of the sampled discussion covered a broad mixture of film-related topics. The remaining clusters were smaller and focused on cast members, box-office estimates and box-office milestones. The uneven cluster sizes indicate that the identified themes were not equally represented in the dataset. Additionally, Clusters 3 and 4 both relate to box-office performance, showing some thematic overlap. As the elbow plot did not identify a clearly optimal number of clusters, the four-cluster solution should be interpreted as exploratory rather than definitive.
+
+
+## Network Analysis
+
+**Research Question:** What does the structure of the sampled Bluesky follow network reveal about user connectivity and centrality among accounts identified through discussions of *Spider-Man: Brand New Day*?
+
+The network data was collected separately from the post dataset used for hypothesis testing, text analysis and clustering. Both datasets relate to Spider-Man: Brand New Day, but the network analysis focuses on follow relationships between Bluesky users.
+
+### Collect users related to the topic
+
+```{r network-posts, eval=FALSE}
+library(igraph)
+
+# Define the topic used to identify relevant Bluesky users
+topic <- "Spider-Man Brand New Day"
+
+# Search for recent posts related to the topic
+posts <- search_post(topic, sort = "latest", limit = 20)
+
+# Inspect the dimensions and variables in the returned data
+dim(posts)
+names(posts)
+
+# Preview the authors and text of the first five posts
+head(posts[, c("author_handle", "author_name", "text")], 5)
+```
+
+A Bluesky search for “Spider-Man Brand New Day” was used to identify users discussing the film. Following the network construction approach used in Module 7, recent posts were retrieved and their authors were used as candidates for constructing the network. This ensures that the starting point of the network is connected to the topic being investigated rather than selecting an unrelated Bluesky account.
+
+
+### Identify the seed user
+```{r network-author-info, eval=FALSE}
+# Retrieve profile information for each unique author
+author_info <- get_user_info(unique(posts$author_handle))
+
+# Display the five authors with the largest follower counts
+top_candidates <- head(author_info[order(author_info$followers_count,
+  decreasing = TRUE), c(
+    "actor_handle", "actor_name", "followers_count", "follows_count"
+  )], 5)
+
+top_candidates
+
+# Select the highest-followed candidate that follows
+# enough accounts to construct the first level of the network
+eligible_candidates <- author_info[author_info$follows_count >= 10, ]
+
+seed_user_handle <- eligible_candidates$actor_handle[
+  which.max(eligible_candidates$followers_count)
+]
+
+# Display the selected seed user's handle
+seed_user_handle
+```
+
+The seed user was selected from authors of posts retrieved about Spider-Man: Brand New Day. To ensure that the seed could generate a meaningful first level of the follow network, authors following at least 10 accounts were retained as eligible candidates. Among these candidates, the author with the largest follower count was selected as the seed user. This provides a reproducible selection rule while ensuring that the network can extend beyond a single first-level connection.
+
+### Collect the seed user's follow relationships
+
+```{r network-first-level, eval=FALSE}
+# Retrieve up to 10 accounts followed by the seed user
+friends_handles <- get_follows(seed_user_handle, limit = 10)$actor_handle
+
+# Display the accounts followed by the seed user
+friends_handles
+```
+
+The first level of the network consists of accounts followed by the selected seed user. In this network, an edge represents a real Bluesky follow relationship. For example, an edge from User A to User B means that User A follows User B. Therefore, the edges are based on observed relationships obtained through the Bluesky API rather than relationships created solely for the analysis.
+
+### Collect the second level of the network
+
+```{r network-second-level, eval=FALSE}
+# Retrieve up to 20 accounts followed by each direct friend
+more_friends <- lapply(friends_handles, get_follows, limit = 20)
+
+# Extract the account handles from each result
+more_friends_handles <- lapply(more_friends, `[[`, "actor_handle")
+
+# Check how many accounts were retrieved for each direct friend
+sapply(more_friends_handles, length)
+```
+
+A second level of follow relationships was collected by retrieving accounts followed by each of the seed user's direct connections. This produces a friends-of-friends network, allowing the analysis to extend beyond only the seed user's immediate connections. The number retrieved for each user should also be inspected because API availability or retrieval limits may result in fewer accounts being returned for some users. Module 7 specifically notes that zero or smaller counts can indicate empty, unavailable, failed or limited retrievals.
+
+### Create the directed edge list
+
+```{r network-edges, eval=FALSE}
+# Create edges from the seed user to each directly followed account
+el_seed <- cbind(
+  from = rep(seed_user_handle, length(friends_handles)),
+  to = friends_handles
+)
+
+# Create edges from each direct friend to the accounts they follow
+el_friends <- lapply(seq_along(friends_handles), function(i) {
+  cbind(from = rep(friends_handles[i],
+                   length(more_friends_handles[[i]])),
+        to = more_friends_handles[[i]])
+})
+
+# Combine first-level and second-level relationships
+# and remove duplicate edges
+el <- unique(rbind(el_seed, do.call(rbind, el_friends)))
+
+# Remove any self-follow relationships
+el <- el[el[, "from"] != el[, "to"], , drop = FALSE]
+
+# Inspect the size and first few relationships in the edge list
+dim(el)
+head(el)
+```
+
+The nodes in the network represent Bluesky user accounts, while each edge represents a follow relationship between two users. The network is directed because following is directional: User A following User B does not necessarily mean User B follows User A. In the edge list, from identifies the account performing the follow and to identifies the account being followed. Duplicate and self-follow edges are removed before constructing the graph. This definition matches the directed follow-network construction taught in Module 7.
+
+### Construct the full network and subgraph
+
+```{r}
+library(igraph)
+
+# Load the final saved network
+load("SpiderMan_Network_Final.RData")
+
+# Select users with the highest degree
+top_users = names(sort(degree(g), decreasing = TRUE))[1:40]
+
+# Create a subgraph containing these users
+g2 = induced_subgraph(g, vids = top_users)
+
+```
+
+
+The full network (g) contains all collected first- and second-level follow relationships. A smaller subgraph (g2) was created using the 40 users with the highest degree in the full network. This makes it easier to visualise the more connected users and their relationships. The subgraph is used only for visualisation, while centrality measures are calculated using the complete network.
+
+### Visualise the full network
+```{r}
+# Visualise the complete network
+# Small labels and vertices are used because the full graph
+# contains a relatively large number of users
+plot(g, layout = layout_with_fr(g),
+     vertex.size = 5,
+     vertex.label.cex = 0.25,
+     edge.arrow.size = 0.2
+     )
+
+```
+
+The full network visualisation displays all collected follow relationships. The Fruchterman-Reingold layout is used to position connected nodes within the graph. Because the complete network contains many users, small vertex and label sizes are used to reduce visual overlap. The layout affects only the visual positioning of nodes and does not alter the network relationships or calculated centrality measures.
+
+
+### Visualise the subgraph
+```{r}
+# Visualise the 40 highest-degree users
+plot(g2,
+     layout = layout_with_kk(g2),
+     vertex.size = 7,
+     vertex.label.cex = 0.3,
+     edge.arrow.size = 0.2)
+
+
+```
+
+The subgraph displays the 40 highest-degree users and the follow relationships between them. The Kamada-Kawai layout was used to make the network structure easier to interpret. This visualisation highlights the more connected users, while the full network is retained for all centrality calculations.
+
+### Report network size and density
+```{r}
+# Calculate the total number of nodes
+vcount(g)
+
+# Calculate the total number of edges
+ecount(g)
+
+# Calculate network density
+round(edge_density(g), 4)
+
+# Check the number of weakly connected components
+components(g, mode = "weak")$no
+```
+
+The full network contained 208 users and 209 directed follow relationships, with a network density of 0.0049. This low density indicates that the sampled network is sparse, meaning that only a small proportion of all possible connections between users were observed. This is expected given the friends-of-friends sampling approach, where relationships were collected from a selected seed user and its first- and second-level connections rather than from the entire Bluesky network. Although the network is sparse, it consists of one weakly connected component. This means all 208 users are connected through at least one path when the direction of follow relationships is ignored.
+
+### Degree distribution
+```{r}
+# Plot the degree distribution of the full network
+plot(degree_distribution(g), type = "h",
+     xlab = "Degree",
+     ylab = "Proportion",
+     main = "Bluesky degree distribution")
+```
+
+The degree distribution shows that most users in the network have a low degree, while a small number of users have substantially more connections. This suggests that connectivity is unevenly distributed across the sampled network, with a small group of accounts occupying more highly connected positions.
+
+### Degree centrality
+```{r}
+# Display the five users with the highest degree
+head(sort(degree(g), decreasing = TRUE), 5)
+```
+
+Degree centrality identifies users with the greatest number of connections within the sampled network. wolfsparrow.bsky.social had the highest degree with 22 connections, followed by omisspearl.bsky.social and mythiccvixen.bsky.social with 21 connections each. These users were therefore among the most highly connected accounts in the constructed follow network.
+
+### Closeness centrality
+```{r}
+# Display the five users with the highest closeness centrality
+round(head(sort(closeness(g, mode = "all"),
+                decreasing = TRUE), 5), 4)
+```
+
+Closeness centrality reflects how closely positioned a user is to other users through network paths. torrancesene.bsky.social had the highest closeness centrality at 0.0025, followed by wolfsparrow.bsky.social and caseywritessmut.bsky.social at 0.0018. This indicates that torrancesene.bsky.social occupied the most central position in terms of its overall path distance to other users in the sampled network. Its position as the seed user should also be considered when interpreting this result, as the network was constructed outward from this account.
+
+### Betweenness centrality
+```{r}
+# Display the five users with the highest betweenness centrality
+round(head(sort(betweenness(g, directed = TRUE),
+                decreasing = TRUE), 5), 4)
+
+```
+
+Betweenness centrality measures the extent to which a user lies on paths connecting other users in the network. torrancesene.bsky.social had the highest betweenness score at 187, followed by wolfsparrow.bsky.social at 60 and omisspearl.bsky.social at 40. This suggests that these accounts occupy important bridging positions within the sampled network, connecting different users or parts of the network through network paths.
+
+### Limitations
+The network should be interpreted as a sampled representation of follow relationships rather than the complete Bluesky network surrounding Spider-Man: Brand New Day. Network construction began with users identified through the topic search and expanded from one selected seed user using first- and second-level follow relationships. Consequently, the structure and centrality results are influenced by the selected seed, API retrieval limits and the friends-of-friends sampling process. In addition, a follow relationship does not necessarily mean that every user in the expanded network posted about or discussed the film. Therefore, the results describe structural positions within the sampled follow network rather than the complete community discussing the film.
+
+# Overall Findings
+
+This project examined Bluesky discussions surrounding *Spider-Man: Brand New Day* using hypothesis testing, text analysis, clustering and network analysis.
+
+The hypothesis test found no statistically significant association between mentioning Tom Holland and receiving at least one like (p = 0.8186). While 48.92% of posts without a Tom Holland mention received at least one like, compared with 45.45% of posts mentioning him, the difference was not statistically significant.
+
+Text analysis identified frequently occurring words such as *tom*, *holland*, *marvel*, *film* and *pugh*. The TF-IDF word cloud highlighted distinctive terms such as *digital*, *nowplaying* and *tombstone*, suggesting discussions about the film's cast, characters and promotional content.
+
+Clustering grouped 160 posts into four clusters representing cast and characters, general film discussions, box-office estimates and global box-office milestones. However, the clusters were unevenly distributed, with 127 posts belonging to the largest cluster.
+
+Network analysis identified 208 users and 209 directed follow relationships, with a low network density of 0.0049. This indicates a sparse sampled network. The selected seed user, torrancesene.bsky.social, had the highest betweenness centrality, highlighting its central position within the sampled network. Despite its low density, the network consisted of one weakly connected component, indicating that all sampled users were connected when the direction of follow relationships was ignored.
+
+Overall, the findings show that Bluesky discussions about the film cover several themes, while engagement and network connections vary across sampled users. The findings should be interpreted considering the limitations of the collected posts, clustering method and network sampling approach.
